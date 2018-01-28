@@ -1,0 +1,80 @@
+#! /bin/bash
+
+set -f
+
+DBFILE='/var/lib/jenkins/workspace/auto_get_into_pool/auto/efficiencyPromotion/auto_get_into_pool/resource/dbfile.db'
+PORT=5000
+
+function ret() {
+    echo "$@" >> response
+}
+
+function log() {
+    timestamp="$(date +'%D %T')"
+    echo "[${timestamp}] $@" >> log
+}
+
+function clear() {
+    for pid in $(cat pid); do 
+        kill -9 ${pid}
+    done
+    pids="$(ps -ef | grep 'tailf' | grep -v 'grep' | awk '{print $2}')"
+    for pid in ${pids}; do 
+        kill -9 ${pid}
+    done
+}
+
+function main(){
+    >pid
+    >request
+    >response
+
+    nc -lk $PORT > request < <(tailf response) &
+    echo $! >> pid
+    
+    while read line ; do
+        ret "$(react ${line})"
+        log "[req] $line, [res] $(tail -1 response)"
+    done < <(tailf request)
+
+}
+
+function react() {
+    req="$@"
+    consumed=0
+    if [[ "${req}" == "use db" ]]; then 
+        echo 1 > dbflag
+        consumed=1
+        echo "OK"   
+    elif [[ "$req" == "quit" ]]; then 
+        echo 0 > dbflag
+        consumed=1
+        echo "Close DB"
+    fi
+
+    if [[ $consumed -eq 1 ]] ; then 
+        return 
+    fi
+    if [[ $(<dbflag) -eq 1 ]]; then 
+        sqlite3 "${DBFILE}" 2>&1 <<<"$req"
+        return $?
+    fi
+    echo "hell $req"
+}
+
+function usage() {
+    echo "Usage: $0 dbfile port"
+}
+
+
+trap clear SIGINT SIGTERM
+
+if [[ "$1" == "-h"]]; then 
+    usage
+    return 0
+fi
+
+[[ -n "$1" ]] && DBFILE="$1"
+[[ -n "$2" ]] && PORT="$2"
+main "$@"
+
